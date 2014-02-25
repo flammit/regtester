@@ -45,14 +45,15 @@ func GenerateCoinbaseTx(coinbase []byte, address btcutil.Address) (*btcwire.MsgT
 // GenerateNewBlock creates a new block
 //
 func GenerateNewBlock(
-	btcnet btcwire.BitcoinNet,
+	net btcwire.BitcoinNet,
+	chain *btcchain.BlockChain,
 	prevBlock *btcutil.Block,
 	subsidyAddress btcutil.Address,
-	txs []*btcwire.MsgTx,
+	txs []*btcutil.Tx,
 ) (*btcutil.Block, error) {
 	// TODO: allow a coinbase tx generator function given total fees
 	// to set coinbase vouts
-	miningParams := ChainMiningParams(btcnet)
+	miningParams := ChainMiningParams(net)
 
 	// setup block header
 	prevHash, err := prevBlock.Sha()
@@ -84,9 +85,43 @@ func GenerateNewBlock(
 	// calculate fees and total value for coinbase
 	var totalFees int64
 	if txs != nil {
+	transactions:
 		for _, tx := range txs {
-			newMsgBlock.AddTransaction(tx)
-			// TODO: handle fees properly
+			txStore, err := chain.FetchTransactionStore(tx)
+			if err != nil {
+				return nil, err
+			}
+
+			mtx := tx.MsgTx()
+
+			// check inputs
+			var inputValue int64
+			for txInIndex, txIn := range mtx.TxIn {
+				txData, ok := txStore[txIn.PreviousOutpoint.Hash]
+				if !ok {
+					log.Debugf("Missing input transaction for tx hash %v input %d, skipping",
+						txIn.PreviousOutpoint.Hash.String(), txInIndex)
+					continue transactions
+				}
+
+				inMsgTx := txData.Tx.MsgTx()
+				if int(txIn.PreviousOutpoint.Index) >= len(inMsgTx.TxOut) {
+					log.Debugf("Invalid outpoint on input transaction for tx hash %v input %d, skipping",
+						txIn.PreviousOutpoint.Hash.String(), txInIndex)
+					continue transactions
+				}
+
+				inMsgTxOut := inMsgTx.TxOut[txIn.PreviousOutpoint.Index]
+				inputValue += inMsgTxOut.Value
+			}
+
+			var outputValue int64
+			for _, txOut := range mtx.TxOut {
+				outputValue += txOut.Value
+			}
+
+			totalFees += (inputValue - outputValue)
+			newMsgBlock.AddTransaction(mtx)
 		}
 	}
 

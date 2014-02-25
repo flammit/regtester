@@ -73,8 +73,8 @@ func main() {
 		return
 	}
 
-	for numBlocks := 0; numBlocks < 15; numBlocks++ {
-		newBlock, err := regtester.GenerateNewBlock(net, prevBlock, subsidyAddress, nil)
+	for numBlocks := 0; numBlocks < 6; numBlocks++ {
+		newBlock, err := regtester.GenerateNewBlock(net, chain, prevBlock, subsidyAddress, nil)
 		if err != nil {
 			log.Errorf("Failed to generate new block: error=%v", err)
 			return
@@ -95,15 +95,14 @@ func main() {
 		}
 		blockHexString := hex.EncodeToString(blockBytes.Bytes())
 		log.Infof("Block hash (%d): %s", newBlock.Height(), blockHash.String())
-		log.Infof("Block hex  (%d): %s", newBlock.Height(), blockHexString)
 
+		// update our local chain, make sure it adds
 		err = chain.ProcessBlock(newBlock, false)
 		if err != nil {
 			log.Errorf("Failed to add block to chain: error=%v", err)
 			return
 		}
 
-		log.Infof("Sending Block %d", newBlock.Height())
 		response, jsonErr := btcd.SubmitBlock(blockHexString)
 		if jsonErr != nil {
 			log.Errorf("Failed to submit block to btcd: err=%v", jsonErr)
@@ -117,6 +116,7 @@ func main() {
 
 		// <-addedBtcd
 
+		// necessary to ensure next block timestamp is after this one
 		time.Sleep(time.Second)
 
 		prevBlock = newBlock

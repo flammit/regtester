@@ -3,9 +3,6 @@ package main
 import (
 	"bytes"
 	"encoding/hex"
-	"github.com/conformal/btcchain"
-	"github.com/conformal/btcdb"
-	_ "github.com/conformal/btcdb/memdb"
 	"github.com/conformal/btcutil"
 	"github.com/conformal/btcwire"
 	"github.com/conformal/btcws"
@@ -26,24 +23,12 @@ func main() {
 	defer backendLog.Flush()
 
 	net := btcwire.TestNet
-	chainParams := btcchain.ChainParams(net)
 
 	subsidyAddress, err := btcutil.DecodeAddr(testNetPublicKeyHash)
 	if err != nil {
 		log.Errorf("Failed to parse subsidy address: error=%v", err)
 		return
 	}
-
-	db, err := btcdb.CreateDB("memdb")
-	if err != nil {
-		log.Errorf("Failed to make new memdb: error=%v", err)
-		return
-	}
-	genesisBlock := btcutil.NewBlock(chainParams.GenesisBlock)
-	genesisBlock.SetHeight(0)
-	db.InsertBlock(genesisBlock)
-
-	chain := btcchain.New(db, net, nil)
 
 	cfg := &btcdcommander.Config{
 		CAFileName: "/Users/flam/Library/Application Support/Btcd/rpc.cert",
@@ -71,8 +56,24 @@ func main() {
 	}()
 	btcd.Start()
 
-	prevBlock := genesisBlock
-	for height := 1; height <= 15; height++ {
+	chain, db, err := regtester.SyncChain(btcd)
+	if err != nil {
+		log.Errorf("Failed to Sync Chain to BTCD: error=%v", err)
+		return
+	}
+
+	latestBlockLocator, err := chain.LatestBlockLocator()
+	if err != nil {
+		log.Errorf("Failed to get latestBlockLocator: error=%v", err)
+		return
+	}
+	prevBlock, err := db.FetchBlockBySha(latestBlockLocator[0])
+	if err != nil {
+		log.Errorf("Failed to fetch best block from memdb: error=%v", err)
+		return
+	}
+
+	for numBlocks := 0; numBlocks < 15; numBlocks++ {
 		newBlock, err := regtester.GenerateNewBlock(net, prevBlock, subsidyAddress, nil)
 		if err != nil {
 			log.Errorf("Failed to generate new block: error=%v", err)

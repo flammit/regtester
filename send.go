@@ -29,10 +29,10 @@ type TxInDetails struct {
 	PkWif string
 }
 
-func decodeKeyPair(net btcwire.BitcoinNet, pkWif string) (*ecdsa.PrivateKey, []byte, error) {
+func decodeKeyPair(net btcwire.BitcoinNet, pkWif string) (*ecdsa.PrivateKey, bool, error) {
 	pk, pkNet, compressed, err := btcutil.DecodePrivateKey(pkWif)
 	if err != nil {
-		return nil, nil, err
+		return nil, false, err
 	}
 
 	_ = pkNet
@@ -50,41 +50,10 @@ func decodeKeyPair(net btcwire.BitcoinNet, pkWif string) (*ecdsa.PrivateKey, []b
 		Y:     y,
 	}
 
-	var pubKeyBytes []byte
-	if compressed {
-		pubKeyBytes = (*btcec.PublicKey)(pubKey).SerializeCompressed()
-	} else {
-		pubKeyBytes = (*btcec.PublicKey)(pubKey).SerializeUncompressed()
-	}
-
 	return &ecdsa.PrivateKey{
 		PublicKey: *pubKey,
 		D:         new(big.Int).SetBytes(pk),
-	}, pubKeyBytes, nil
-}
-
-func calculateScriptSig(mtx *btcwire.MsgTx, privateKey *ecdsa.PrivateKey, pubKeyBytes []byte) ([]byte, error) {
-	mtxBytes := new(bytes.Buffer)
-	err := mtx.Serialize(mtxBytes)
-	if err != nil {
-		return nil, err
-	}
-	msgBytes := append(mtxBytes.Bytes(), sigHashCode...)
-	msgHash := btcwire.DoubleSha256(msgBytes)
-
-	r, s, err := ecdsa.Sign(rand.Reader, privateKey, msgHash)
-	if err != nil {
-		return nil, err
-	}
-	sig := &btcec.Signature{r, s}
-
-	script := btcscript.NewScriptBuilder()
-	sigBytes := sig.Serialize()
-	sigBytes = append(sigBytes, sigHashType...)
-	script.AddData(sigBytes)
-
-	script.AddData(pubKeyBytes)
-	return script.Script(), nil
+	}, compressed, nil
 }
 
 // SendTransaction creates a signed transaction
@@ -111,26 +80,21 @@ func SendTransaction(
 	}
 
 	// sign each input
-	scriptSigs := make([][]byte, len(txIns))
 	for i, txIn := range txIns {
-		mtx.TxIn[i].SignatureScript = txIn.Tx.MsgTx().TxOut[txIn.Index].PkScript
-
-		privateKey, pubKeyBytes, err := decodeKeyPair(net, txIns[i].PkWif)
+		privateKey, compress, err := decodeKeyPair(net, txIns[i].PkWif)
 		if err != nil {
 			return nil, err
 		}
 
-		scriptSig, err := calculateScriptSig(mtx, privateKey, pubKeyBytes)
+		subscript := txIn.Tx.MsgTx().TxOut[txIn.Index].PkScript
+
+		scriptSig, err := btcscript.SignatureScript(mtx, i, subscript, btcscript.SigHashAll,
+			privateKey, compress)
 		if err != nil {
 			return nil, err
 		}
-		scriptSigs[i] = scriptSig
 
-		// reset for next sig
-		mtx.TxIn[i].SignatureScript = zeroByte
-	}
-	for i, _ := range txIns {
-		mtx.TxIn[i].SignatureScript = scriptSigs[i]
+		mtx.TxIn[i].SignatureScript = scriptSig
 	}
 
 	txBytes := new(bytes.Buffer)

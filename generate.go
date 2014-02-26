@@ -27,9 +27,9 @@ var (
 func GenerateCoinbaseTx(coinbase []byte, address btcutil.Address) (*btcwire.MsgTx, error) {
 	tx := btcwire.NewMsgTx()
 	tx.AddTxIn(&btcwire.TxIn{
-		PreviousOutpoint: btcwire.OutPoint{btcwire.ShaHash{}, math.MaxUint32},
+		PreviousOutpoint: btcwire.OutPoint{btcwire.ShaHash{}, btcwire.MaxTxInSequenceNum},
 		SignatureScript:  coinbase,
-		Sequence:         math.MaxUint32,
+		Sequence:         btcwire.MaxTxInSequenceNum,
 	})
 	pkScript, err := btcscript.PayToAddrScript(address)
 	if err != nil {

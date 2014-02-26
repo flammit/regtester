@@ -49,6 +49,9 @@ func SyncChain(btcd *btcdcommander.Commander) (*btcchain.BlockChain, btcdb.Db, e
 		}
 
 		block, err := btcutil.NewBlockFromBytes(blockBytes)
+		if err != nil {
+			return nil, nil, err
+		}
 		block.SetHeight(height)
 
 		err = chain.ProcessBlock(block, false)

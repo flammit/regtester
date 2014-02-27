@@ -3,9 +3,9 @@ package regtester
 import (
 	"bytes"
 	"crypto/ecdsa"
-	"crypto/rand"
 	"encoding/hex"
 	"errors"
+	"github.com/conformal/btcdb"
 	"github.com/conformal/btcec"
 	"github.com/conformal/btcscript"
 	"github.com/conformal/btcutil"
@@ -17,10 +17,6 @@ import (
 var (
 	ErrNetMismatch          = errors.New("invalid bitcoin networks don't match")
 	ErrInvalidOutpointIndex = errors.New("invalid outpoint index for transaction input")
-
-	zeroByte    = []byte{0}
-	sigHashCode = []byte{1, 0, 0, 0}
-	sigHashType = []byte{1}
 )
 
 type TxInDetails struct {
@@ -30,17 +26,10 @@ type TxInDetails struct {
 }
 
 func decodeKeyPair(net btcwire.BitcoinNet, pkWif string) (*ecdsa.PrivateKey, bool, error) {
-	pk, pkNet, compressed, err := btcutil.DecodePrivateKey(pkWif)
+	pk, _, compressed, err := btcutil.DecodePrivateKey(pkWif)
 	if err != nil {
 		return nil, false, err
 	}
-
-	_ = pkNet
-	/*
-		if pkNet != net {
-			return nil, ErrNetMismatch
-		}
-	*/
 
 	x, y := btcec.S256().ScalarBaseMult(pk)
 
@@ -56,14 +45,9 @@ func decodeKeyPair(net btcwire.BitcoinNet, pkWif string) (*ecdsa.PrivateKey, boo
 	}, compressed, nil
 }
 
-// SendTransaction creates a signed transaction
-// that spends a coins created by new blocks mined in regtester.
-func SendTransaction(
-	net btcwire.BitcoinNet,
-	txIns []*TxInDetails,
-	txOuts []*btcwire.TxOut,
-	btcd *btcdcommander.Commander,
-) (*btcutil.Tx, error) {
+// SendTransaction creates a signed transaction and sends to
+// btcd using sendrawtransaction.
+func SendTransaction(net btcwire.BitcoinNet, txIns []*TxInDetails, txOuts []*btcwire.TxOut, btcd *btcdcommander.Commander) (*btcutil.Tx, error) {
 	mtx := btcwire.NewMsgTx()
 	for _, txIn := range txIns {
 		if txIn.Index >= uint32(len(txIn.Tx.MsgTx().TxOut)) {
@@ -71,7 +55,7 @@ func SendTransaction(
 		}
 		mtx.AddTxIn(&btcwire.TxIn{
 			PreviousOutpoint: btcwire.OutPoint{*txIn.Tx.Sha(), txIn.Index},
-			SignatureScript:  zeroByte,
+			SignatureScript:  nil,
 			Sequence:         btcwire.MaxTxInSequenceNum,
 		})
 	}
@@ -109,6 +93,53 @@ func SendTransaction(
 	if jsonErr != nil {
 		return nil, errors.New(jsonErr.Message)
 	}
-
 	return btcutil.NewTx(mtx), nil
+}
+
+// SpendCoinbaseTransaction sends the coinbase transaction value at
+// the given height to the pubKeyHash specified.
+func SpendCoinbaseTransaction(net btcwire.BitcoinNet, db btcdb.Db, btcd *btcdcommander.Commander, height int64, subsidyPrivateKeyWif string, pubKeyHash string) error {
+	tx, err := RetrieveCoinbaseTransaction(db, height)
+	if err != nil {
+		log.Error("Failed to retreive coinbase transaction to spend: error=%v", err)
+		return err
+	}
+
+	txIns := []*TxInDetails{
+		&TxInDetails{
+			Tx:    tx,
+			Index: 0,
+			PkWif: subsidyPrivateKeyWif,
+		},
+	}
+
+	outAddress, err := btcutil.DecodeAddr(pubKeyHash)
+	if err != nil {
+		log.Errorf("Failed to decode public key hash of target address: error=%v", err)
+		return err
+	}
+	outPkScript, err := btcscript.PayToAddrScript(outAddress)
+	if err != nil {
+		log.Errorf("Failed to generate pay to addr script: error=%v", err)
+		return err
+	}
+	txOuts := []*btcwire.TxOut{
+		&btcwire.TxOut{
+			Value:    tx.MsgTx().TxOut[0].Value, // no fees for you, miner!
+			PkScript: outPkScript,
+		},
+	}
+
+	sentTx, err := SendTransaction(net, txIns, txOuts, btcd)
+	if err != nil {
+		log.Errorf("Failed to spend transaction: error=%v", err)
+		return err
+	}
+
+	sentTxBytes := new(bytes.Buffer)
+	sentTx.MsgTx().Serialize(sentTxBytes)
+	log.Infof("Tx sha: %s", sentTx.Sha().String())
+	log.Infof("Tx hex: %64x", sentTxBytes.Bytes())
+
+	return nil
 }

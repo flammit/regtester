@@ -24,6 +24,10 @@ var (
 	ErrValidBlockHashNotFound = errors.New("couldn't find valid block hash")
 )
 
+// GenerateCoinbaseTx creates a new coinbase transaction with a single
+// outpoint whose script is given by address.
+// NOTE: the value is set to zero and must be set after the block
+// contents is finalized.
 func GenerateCoinbaseTx(coinbase []byte, address btcutil.Address) (*btcwire.MsgTx, error) {
 	tx := btcwire.NewMsgTx()
 	tx.AddTxIn(&btcwire.TxIn{
@@ -42,8 +46,9 @@ func GenerateCoinbaseTx(coinbase []byte, address btcutil.Address) (*btcwire.MsgT
 	return tx, nil
 }
 
-// GenerateNewBlock creates a new block
-//
+// GenerateNewBlock creates a new block whose parent is prevBlock
+// and which potentially contains all of the transactions in txs.
+// The subsidy will go to the subsidyAddress.
 func GenerateNewBlock(
 	net btcwire.BitcoinNet,
 	chain *btcchain.BlockChain,
@@ -87,6 +92,7 @@ func GenerateNewBlock(
 	if txs != nil {
 	transactions:
 		for _, tx := range txs {
+			// TODO: need to check depenedencies, double spend etc.
 			txStore, err := chain.FetchTransactionStore(tx)
 			if err != nil {
 				return nil, err

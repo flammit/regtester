@@ -1,64 +1,71 @@
 package regtester
 
 import (
+	"bytes"
 	"encoding/hex"
 	"errors"
 	"github.com/conformal/btcchain"
-	"github.com/conformal/btcdb"
-	_ "github.com/conformal/btcdb/memdb"
 	"github.com/conformal/btcutil"
+	"github.com/conformal/btcwire"
 	"github.com/flammit/btcdcommander"
 )
 
-// SyncChain puts the pulls the full blockchain from btcd
-// and places it in a memdb instance of the BlockChain
-func SyncChain(btcd *btcdcommander.Commander) (*btcchain.BlockChain, btcdb.Db, error) {
-	net := btcd.Cfg.Net()
-	chainParams := btcchain.ChainParams(net)
-
-	db, err := btcdb.CreateDB("memdb")
+func extendChain(net btcwire.BitcoinNet, chain *btcchain.BlockChain, prevBlock *btcutil.Block, subsidyAddress btcutil.Address, btcd *btcdcommander.Commander, txs []*btcutil.Tx) (*btcutil.Block, error) {
+	newBlock, err := GenerateNewBlock(net, chain, prevBlock, subsidyAddress, txs)
 	if err != nil {
-		log.Errorf("Failed to make new memdb: error=%v", err)
-		return nil, nil, err
+		log.Errorf("Failed to generate new block: error=%v", err)
+		return nil, err
 	}
-	genesisBlock := btcutil.NewBlock(chainParams.GenesisBlock)
-	genesisBlock.SetHeight(0)
-	db.InsertBlock(genesisBlock)
 
-	chain := btcchain.New(db, net, nil)
+	msgBlock := newBlock.MsgBlock()
+	blockHash, err := msgBlock.BlockSha()
+	if err != nil {
+		log.Errorf("Failed to calculate block hash: error=%v", err)
+		return nil, err
+	}
 
-	bestBlockInfo, jsonErr := btcd.GetBestBlock()
+	blockBytes := new(bytes.Buffer)
+	err = msgBlock.Serialize(blockBytes)
+	if err != nil {
+		log.Errorf("Failed to serialize block: error=%v", err)
+		return nil, err
+	}
+	blockHexString := hex.EncodeToString(blockBytes.Bytes())
+	log.Infof("Block hash (%d): %s", newBlock.Height(), blockHash.String())
+
+	// update our local chain, make sure it adds
+	err = chain.ProcessBlock(newBlock, false)
+	if err != nil {
+		log.Errorf("Failed to add block to chain: error=%v", err)
+		return nil, err
+	}
+
+	response, jsonErr := btcd.SubmitBlock(blockHexString)
 	if jsonErr != nil {
-		return nil, nil, errors.New(jsonErr.Message)
+		log.Errorf("Failed to submit block to btcd: err=%v", jsonErr)
+		return nil, errors.New(jsonErr.Message)
 	}
-
-	for height := int64(1); height <= int64(bestBlockInfo.Height); height++ {
-		blockHash, jsonErr := btcd.GetBlockHash(height)
-		if jsonErr != nil {
-			return nil, nil, errors.New(jsonErr.Message)
-		}
-
-		blockHex, jsonErr := btcd.GetRawBlock(blockHash)
-		if jsonErr != nil {
-			return nil, nil, errors.New(jsonErr.Message)
-		}
-
-		blockBytes, err := hex.DecodeString(blockHex)
-		if err != nil {
-			return nil, nil, err
-		}
-
-		block, err := btcutil.NewBlockFromBytes(blockBytes)
-		if err != nil {
-			return nil, nil, err
-		}
-		block.SetHeight(height)
-
-		err = chain.ProcessBlock(block, false)
-		if err != nil {
-			return nil, nil, err
-		}
+	if response != nil {
+		log.Errorf("Failed to submit block: response is '%#v'", response)
+		return nil, errors.New(response.(string))
 	}
+	log.Infof("Sent Block %d", newBlock.Height())
+	return newBlock, nil
+}
 
-	return chain, db, nil
+// ExtendChainEmpty creates a new block that extends the main chain
+// but contains no transactions.
+func ExtendChainEmpty(net btcwire.BitcoinNet, chain *btcchain.BlockChain, prevBlock *btcutil.Block, subsidyAddress btcutil.Address, btcd *btcdcommander.Commander) (*btcutil.Block, error) {
+	return extendChain(net, chain, prevBlock, subsidyAddress, btcd, nil)
+}
+
+// ExtendChainWithAllMempool creates a new block that extends the main
+// chain and contains all the transactions that are currently in
+// the mempool of the btcd instance.
+func ExtendChainWithAllMempool(net btcwire.BitcoinNet, chain *btcchain.BlockChain, prevBlock *btcutil.Block, subsidyAddress btcutil.Address, btcd *btcdcommander.Commander) (*btcutil.Block, error) {
+	mempoolTxs, err := RetrieveCurrentMempoolTxs(btcd)
+	if err != nil {
+		return nil, err
+	}
+	return extendChain(net, chain, prevBlock, subsidyAddress, btcd, mempoolTxs)
 }

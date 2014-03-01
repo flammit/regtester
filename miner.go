@@ -46,6 +46,62 @@ func GenerateCoinbaseTx(coinbase []byte, address btcutil.Address) (*btcwire.MsgT
 	return tx, nil
 }
 
+// TODO: add priority
+type blockTx struct {
+	Tx             *btcutil.Tx
+	TxInputAmounts []int64
+}
+
+func calcBlockTx(chain *btcchain.BlockChain, txs []*btcutil.Tx) ([]*blockTx, error) {
+	if txs == nil {
+		return []*blockTx{}, nil
+	}
+
+	blockTxs := make([]*blockTx, len(txs))
+
+	for i, tx := range txs {
+		txStore, err := chain.FetchTransactionStore(tx)
+		if err != nil {
+			return nil, err
+		}
+
+		mtx := tx.MsgTx()
+		blockTx := &blockTx{
+			Tx:             tx,
+			TxInputAmounts: make([]int64, len(mtx.TxIn)),
+		}
+		for txInIndex, txIn := range mtx.TxIn {
+			var inMsgTx *btcwire.MsgTx
+
+			txData, ok := txStore[txIn.PreviousOutpoint.Hash]
+			if !ok || txData.Err != nil {
+				// check our txs
+				for _, t := range txs {
+					if t.Sha().IsEqual(&txIn.PreviousOutpoint.Hash) {
+						inMsgTx = t.MsgTx()
+					}
+				}
+			} else {
+				inMsgTx = txData.Tx.MsgTx()
+			}
+
+			if inMsgTx == nil {
+				return nil, ErrNoTxInfo
+			}
+
+			if int(txIn.PreviousOutpoint.Index) >= len(inMsgTx.TxOut) {
+				return nil, ErrInvalidOutpointIndex
+			}
+
+			inMsgTxOut := inMsgTx.TxOut[txIn.PreviousOutpoint.Index]
+			blockTx.TxInputAmounts[txInIndex] += inMsgTxOut.Value
+		}
+		blockTxs[i] = blockTx
+	}
+
+	return blockTxs, nil
+}
+
 // GenerateNewBlock creates a new block whose parent is prevBlock
 // and which potentially contains all of the transactions in txs.
 // The subsidy will go to the subsidyAddress.
@@ -89,46 +145,26 @@ func GenerateNewBlock(
 
 	// calculate fees and total value for coinbase
 	var totalFees int64
-	if txs != nil {
-	transactions:
-		for _, tx := range txs {
-			// TODO: need to check depenedencies, double spend etc.
-			txStore, err := chain.FetchTransactionStore(tx)
-			if err != nil {
-				return nil, err
-			}
 
-			mtx := tx.MsgTx()
-
-			// check inputs
-			var inputValue int64
-			for txInIndex, txIn := range mtx.TxIn {
-				txData, ok := txStore[txIn.PreviousOutpoint.Hash]
-				if !ok {
-					log.Debugf("Missing input transaction for tx hash %v input %d, skipping",
-						txIn.PreviousOutpoint.Hash.String(), txInIndex)
-					continue transactions
-				}
-
-				inMsgTx := txData.Tx.MsgTx()
-				if int(txIn.PreviousOutpoint.Index) >= len(inMsgTx.TxOut) {
-					log.Debugf("Invalid outpoint on input transaction for tx hash %v input %d, skipping",
-						txIn.PreviousOutpoint.Hash.String(), txInIndex)
-					continue transactions
-				}
-
-				inMsgTxOut := inMsgTx.TxOut[txIn.PreviousOutpoint.Index]
-				inputValue += inMsgTxOut.Value
-			}
-
-			var outputValue int64
-			for _, txOut := range mtx.TxOut {
-				outputValue += txOut.Value
-			}
-
-			totalFees += (inputValue - outputValue)
-			newMsgBlock.AddTransaction(mtx)
+	blockTxs, err := calcBlockTx(chain, txs)
+	if err != nil {
+		return nil, err
+	}
+	for _, blockTx := range blockTxs {
+		mtx := blockTx.Tx.MsgTx()
+		// check inputs
+		var inputValue int64
+		for n := 0; n < len(blockTx.TxInputAmounts); n++ {
+			inputValue += blockTx.TxInputAmounts[n]
 		}
+
+		var outputValue int64
+		for _, txOut := range mtx.TxOut {
+			outputValue += txOut.Value
+		}
+
+		totalFees += (inputValue - outputValue)
+		newMsgBlock.AddTransaction(mtx)
 	}
 
 	// set coinbase value correctly

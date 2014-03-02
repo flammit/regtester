@@ -5,13 +5,15 @@ import (
 	"encoding/hex"
 	"errors"
 	"github.com/conformal/btcchain"
+	"github.com/conformal/btcscript"
 	"github.com/conformal/btcutil"
 	"github.com/conformal/btcwire"
 	"github.com/flammit/btcdcommander"
+	"time"
 )
 
-func extendChain(net btcwire.BitcoinNet, chain *btcchain.BlockChain, prevBlock *btcutil.Block, subsidyAddress btcutil.Address, btcd *btcdcommander.Commander, txs []*btcutil.Tx) (*btcutil.Block, error) {
-	newBlock, err := GenerateNewBlock(net, chain, prevBlock, subsidyAddress, txs)
+func extendChain(net btcwire.BitcoinNet, chain *btcchain.BlockChain, prevBlock *btcutil.Block, subsidyAddress btcutil.Address, btcd *btcdcommander.Commander, txs []*btcutil.Tx, blockTime *time.Time) (*btcutil.Block, error) {
+	newBlock, err := GenerateNewBlock(net, chain, prevBlock, subsidyAddress, txs, blockTime)
 	if err != nil {
 		log.Errorf("Failed to generate new block: error=%v", err)
 		return nil, err
@@ -53,10 +55,16 @@ func extendChain(net btcwire.BitcoinNet, chain *btcchain.BlockChain, prevBlock *
 	return newBlock, nil
 }
 
+// ExtendChainEmptyWithTime creates a new block that extends the main chain
+// but contains no transactions with a specified block time.
+func ExtendChainEmptyWithTime(net btcwire.BitcoinNet, chain *btcchain.BlockChain, prevBlock *btcutil.Block, subsidyAddress btcutil.Address, btcd *btcdcommander.Commander, time *time.Time) (*btcutil.Block, error) {
+	return extendChain(net, chain, prevBlock, subsidyAddress, btcd, nil, time)
+}
+
 // ExtendChainEmpty creates a new block that extends the main chain
 // but contains no transactions.
 func ExtendChainEmpty(net btcwire.BitcoinNet, chain *btcchain.BlockChain, prevBlock *btcutil.Block, subsidyAddress btcutil.Address, btcd *btcdcommander.Commander) (*btcutil.Block, error) {
-	return extendChain(net, chain, prevBlock, subsidyAddress, btcd, nil)
+	return extendChain(net, chain, prevBlock, subsidyAddress, btcd, nil, nil)
 }
 
 // ExtendChainWithAllMempool creates a new block that extends the main
@@ -67,5 +75,37 @@ func ExtendChainWithAllMempool(net btcwire.BitcoinNet, chain *btcchain.BlockChai
 	if err != nil {
 		return nil, err
 	}
-	return extendChain(net, chain, prevBlock, subsidyAddress, btcd, mempoolTxs)
+	return extendChain(net, chain, prevBlock, subsidyAddress, btcd, mempoolTxs, nil)
+}
+
+// ExtendChainWithAllMalleatedMempool creates a new block that extends the main
+// chain and contains all the transactions that are currently in
+// the mempool of the btcd instance.
+func ExtendChainWithAllMalleatedMempool(net btcwire.BitcoinNet, chain *btcchain.BlockChain, prevBlock *btcutil.Block, subsidyAddress btcutil.Address, btcd *btcdcommander.Commander) (*btcutil.Block, error) {
+	mempoolTxs, err := RetrieveCurrentMempoolTxs(btcd)
+
+	malMempoolTxs := make([]*btcutil.Tx, len(mempoolTxs))
+	for i, tx := range mempoolTxs {
+		malMempoolTxs[i] = malleateTxAddOp0(tx)
+	}
+	if err != nil {
+		return nil, err
+	}
+	return extendChain(net, chain, prevBlock, subsidyAddress, btcd, malMempoolTxs, nil)
+}
+
+// malleateTxAddOp0 takes a transaction and creates a new valid transaction with a
+// different transaction hash by adding OP_0 to the first input's script.
+func malleateTxAddOp0(tx *btcutil.Tx) *btcutil.Tx {
+	oldMtx := tx.MsgTx()
+	newMtx := oldMtx.Copy()
+
+	oldBytes := oldMtx.TxIn[0].SignatureScript
+	newBytes := make([]byte, len(oldBytes)+1)
+	newBytes[0] = btcscript.OP_0
+	copy(newBytes[1:], oldBytes[0:])
+
+	newMtx.TxIn[0].SignatureScript = newBytes
+
+	return btcutil.NewTx(newMtx)
 }

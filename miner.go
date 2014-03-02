@@ -8,6 +8,7 @@ import (
 	"github.com/conformal/btcwire"
 	"math"
 	"math/big"
+	"time"
 )
 
 var (
@@ -57,9 +58,10 @@ func calcBlockTx(chain *btcchain.BlockChain, txs []*btcutil.Tx) ([]*blockTx, err
 		return []*blockTx{}, nil
 	}
 
-	blockTxs := make([]*blockTx, len(txs))
+	blockTxs := make([]*blockTx, 0)
 
-	for i, tx := range txs {
+transaction:
+	for _, tx := range txs {
 		txStore, err := chain.FetchTransactionStore(tx)
 		if err != nil {
 			return nil, err
@@ -86,7 +88,8 @@ func calcBlockTx(chain *btcchain.BlockChain, txs []*btcutil.Tx) ([]*blockTx, err
 			}
 
 			if inMsgTx == nil {
-				return nil, ErrNoTxInfo
+				log.Infof("Skipping transaction because no input available")
+				continue transaction
 			}
 
 			if int(txIn.PreviousOutpoint.Index) >= len(inMsgTx.TxOut) {
@@ -96,7 +99,7 @@ func calcBlockTx(chain *btcchain.BlockChain, txs []*btcutil.Tx) ([]*blockTx, err
 			inMsgTxOut := inMsgTx.TxOut[txIn.PreviousOutpoint.Index]
 			blockTx.TxInputAmounts[txInIndex] += inMsgTxOut.Value
 		}
-		blockTxs[i] = blockTx
+		blockTxs = append(blockTxs, blockTx)
 	}
 
 	return blockTxs, nil
@@ -111,6 +114,7 @@ func GenerateNewBlock(
 	prevBlock *btcutil.Block,
 	subsidyAddress btcutil.Address,
 	txs []*btcutil.Tx,
+	blockTime *time.Time,
 ) (*btcutil.Block, error) {
 	// TODO: allow a coinbase tx generator function given total fees
 	// to set coinbase vouts
@@ -126,6 +130,9 @@ func GenerateNewBlock(
 	nextDifficulty := prevBlock.MsgBlock().Header.Bits
 
 	newBlockHeader := btcwire.NewBlockHeader(prevHash, &btcwire.ShaHash{}, nextDifficulty, 0)
+	if blockTime != nil {
+		newBlockHeader.Timestamp = *blockTime
+	}
 	newMsgBlock := btcwire.NewMsgBlock(newBlockHeader)
 	newBlockHeight := prevBlock.Height() + 1
 	newExtraNonce := 0

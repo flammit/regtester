@@ -89,7 +89,7 @@ func SendTransaction(net btcwire.BitcoinNet, txIns []*TxInDetails, txOuts []*btc
 	}
 
 	txHex := hex.EncodeToString(txBytes.Bytes())
-	log.Infof("Sending Raw Transaction: hex=%s", txHex)
+	log.Infof("Tx hex: %s", txHex)
 	_, jsonErr := btcd.SendRawTransaction(txHex)
 	if jsonErr != nil {
 		return nil, errors.New(jsonErr.Message)
@@ -146,7 +146,6 @@ func SpendCoinbaseTransaction(net btcwire.BitcoinNet, db btcdb.Db, btcd *btcdcom
 	sentTxBytes := new(bytes.Buffer)
 	sentTx.MsgTx().Serialize(sentTxBytes)
 	log.Infof("Tx sha: %s", sentTx.Sha().String())
-	log.Infof("Tx hex: %64x", sentTxBytes.Bytes())
 
 	return sentTx, nil
 }
@@ -173,5 +172,7 @@ func SendFromTxToAddress(net btcwire.BitcoinNet, btcd *btcdcommander.Commander, 
 		return nil, err
 	}
 	txOuts := []*btcwire.TxOut{txChange, txOut}
-	return SendTransaction(net, txIns, txOuts, btcd)
+	sentTx, err := SendTransaction(net, txIns, txOuts, btcd)
+	log.Infof("Tx sha: %s", sentTx.Sha().String())
+	return sentTx, err
 }

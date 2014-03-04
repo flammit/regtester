@@ -84,9 +84,23 @@ func ExtendChainWithAllMempool(net btcwire.BitcoinNet, chain *btcchain.BlockChai
 func ExtendChainWithAllMalleatedMempool(net btcwire.BitcoinNet, chain *btcchain.BlockChain, prevBlock *btcutil.Block, subsidyAddress btcutil.Address, btcd *btcdcommander.Commander) (*btcutil.Block, error) {
 	mempoolTxs, err := RetrieveCurrentMempoolTxs(btcd)
 
-	malMempoolTxs := make([]*btcutil.Tx, len(mempoolTxs))
-	for i, tx := range mempoolTxs {
-		malMempoolTxs[i] = malleateTxAddOp0(tx)
+	malMempoolTxs := make([]*btcutil.Tx, 0)
+transactions:
+	for _, tx := range mempoolTxs {
+		log.Infof("Trying to add malleated tx: origTx.sha=%s", tx.Sha())
+		// make sure inputs aren't in mempool, is so remove
+		for _, in := range tx.MsgTx().TxIn {
+			inSha := in.PreviousOutpoint.Hash
+			for _, txCheck := range mempoolTxs {
+				if inSha.IsEqual(txCheck.Sha()) {
+					log.Infof("Transaction depends on another being malleated, skipping: tx.sha=%v, txinput.sha%v",
+						tx.Sha(), txCheck.Sha())
+					continue transactions
+				}
+			}
+		}
+
+		malMempoolTxs = append(malMempoolTxs, malleateTxAddOp0(tx))
 	}
 	if err != nil {
 		return nil, err

@@ -180,7 +180,7 @@ func GenerateNewBlock(
 	// set merkle root
 	newBlock := btcutil.NewBlock(newMsgBlock)
 	newBlock.SetHeight(newBlockHeight)
-	merkleTreeStore := btcchain.BuildMerkleTreeStore(newBlock)
+	merkleTreeStore := btcchain.BuildMerkleTreeStore(newBlock.Transactions())
 	newMsgBlock.Header.MerkleRoot = *merkleTreeStore[len(merkleTreeStore)-1]
 
 	return CalculateNewBlockHash(newBlock)

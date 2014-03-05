@@ -100,7 +100,9 @@ transactions:
 			}
 		}
 
-		malMempoolTxs = append(malMempoolTxs, malleateTxAddOp0(tx))
+		malTx := malleateTxAddOp0(tx)
+		log.Infof("Added malleated tx: malTx.sha=%s", malTx.Sha())
+		malMempoolTxs = append(malMempoolTxs, malTx)
 	}
 	if err != nil {
 		return nil, err

@@ -84,12 +84,12 @@ func main() {
 		prevBlock = newBlock
 	}
 
-	err = regtester.SpendCoinbaseTransaction(net, db, btcd, 1, testNetMinerPrivateKey, testNetSendPublicKeyAddr)
+	_, err = regtester.SpendCoinbaseTransaction(net, db, btcd, 1, testNetMinerPrivateKey, testNetSendPublicKeyAddr)
 	if err != nil {
 		log.Errorf("Failed to spend coinbase transaction from height 1")
 		return
 	}
-	err = regtester.SpendCoinbaseTransaction(net, db, btcd, 2, testNetMinerPrivateKey, testNetSendPublicKeyAddr)
+	_, err = regtester.SpendCoinbaseTransaction(net, db, btcd, 2, testNetMinerPrivateKey, testNetSendPublicKeyAddr)
 	if err != nil {
 		log.Errorf("Failed to extend coinbase transaction from height 2")
 		return

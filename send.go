@@ -173,6 +173,8 @@ func SendFromTxToAddress(net btcwire.BitcoinNet, btcd *btcdcommander.Commander, 
 	}
 	txOuts := []*btcwire.TxOut{txChange, txOut}
 	sentTx, err := SendTransaction(net, txIns, txOuts, btcd)
-	log.Infof("Tx sha: %s", sentTx.Sha().String())
+	if sentTx != nil {
+		log.Infof("Tx sha: %s", sentTx.Sha().String())
+	}
 	return sentTx, err
 }

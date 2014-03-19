@@ -98,7 +98,7 @@ func SendTransaction(net btcwire.BitcoinNet, txIns []*TxInDetails, txOuts []*btc
 }
 
 func PubKeyHashTxOut(pubKeyHash string, value int64) (*btcwire.TxOut, error) {
-	outAddress, err := btcutil.DecodeAddr(pubKeyHash)
+	outAddress, err := btcutil.DecodeAddress(pubKeyHash)
 	if err != nil {
 		log.Errorf("Failed to decode public key hash of target address: error=%v", err)
 		return nil, err

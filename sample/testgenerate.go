@@ -24,7 +24,7 @@ func main() {
 
 	net := btcwire.TestNet
 
-	subsidyAddress, err := btcutil.DecodeAddr(testNetMinerPublicKeyAddr)
+	subsidyAddress, err := btcutil.DecodeAddress(testNetMinerPublicKeyAddr)
 	if err != nil {
 		log.Errorf("Failed to parse subsidy address: error=%v", err)
 		return
